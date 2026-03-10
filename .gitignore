@@ -1,0 +1,21 @@
+# Secrets
+.env
+*.pem
+credentials.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Temp
+*.log
+__pycache__/
+*.pyc
+
+# Deploy artifacts
+*.zip
