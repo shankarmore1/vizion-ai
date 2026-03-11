@@ -1144,6 +1144,137 @@
         font-size: 12px;
       }
     }
+
+    /* ===== DISCLAIMER MODAL ===== */
+    .disclaimer-overlay {
+      display: flex;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      z-index: 3000;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .disclaimer-overlay.hidden {
+      display: none;
+    }
+
+    .disclaimer-modal {
+      background: var(--chat-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 32px;
+      max-width: 520px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: modalSlide 0.4s ease;
+    }
+
+    @keyframes modalSlide {
+      from {
+        opacity: 0;
+        transform: translateY(30px) scale(0.95);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .disclaimer-icon {
+      font-size: 40px;
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    .disclaimer-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .disclaimer-text {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--bot-text);
+      margin-bottom: 24px;
+    }
+
+    .disclaimer-text p {
+      margin-bottom: 10px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .disclaimer-text ul {
+      list-style: none;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .disclaimer-text li {
+      padding: 10px 14px;
+      background: var(--accent-glow);
+      border-radius: 10px;
+      border-left: 3px solid var(--accent);
+      font-size: 13px;
+    }
+
+    .disclaimer-text li strong {
+      color: var(--accent);
+    }
+
+    .disclaimer-accept-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s;
+    }
+
+    .disclaimer-accept-btn:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px var(--shadow-md);
+    }
+
+    .disclaimer-footer {
+      text-align: center;
+      font-size: 11px;
+      color: var(--timestamp);
+      margin-top: 12px;
+    }
+
+    @media (max-width: 768px) {
+      .disclaimer-modal {
+        padding: 24px;
+        margin: 10px;
+      }
+
+      .disclaimer-title {
+        font-size: 18px;
+      }
+
+      .disclaimer-text li {
+        font-size: 12px;
+      }
+    }
   </style>
 </head>
 
@@ -1156,6 +1287,28 @@
     <img id="lightboxImage" src="" alt="Full size image" />
   </div>
 
+  <!-- Disclaimer Modal -->
+  <div class="disclaimer-overlay" id="disclaimerOverlay">
+    <div class="disclaimer-modal">
+      <div class="disclaimer-icon">🔮</div>
+      <h2 class="disclaimer-title">Welcome to Vizion AI</h2>
+      <div class="disclaimer-text">
+        <p>Before you begin, please note:</p>
+        <ul>
+          <li>Your conversations and uploaded images are stored securely on our backend servers <strong>only to maintain
+              conversation context and enhance output quality</strong>.</li>
+          <li>Your data is <strong>not shared with any third party</strong>.</li>
+          <li>Conversation history is <strong>automatically deleted after 7 days</strong>.</li>
+          <li>Please <strong>do not share any sensitive, personal, or confidential information</strong> with the chatbot
+            including but not limited to passwords, financial details, or private business data.</li>
+          <li>Vizion AI can make mistakes. Always verify important information independently.</li>
+        </ul>
+      </div>
+      <button class="disclaimer-accept-btn" onclick="acceptDisclaimer()">I Understand & Accept</button>
+      <p class="disclaimer-footer">By clicking above, you agree to use Vizion AI responsibly.</p>
+    </div>
+  </div>
+
   <div class="app-container" id="appContainer">
     <div class="drag-overlay" id="dragOverlay">
       <div class="drag-overlay-icon">📎</div>
@@ -1164,7 +1317,7 @@
 
     <div class="chat-header" role="banner">
       <div class="header-brand">
-        <div class="brand-icon" aria-hidden="true">✨</div>
+        <div class="brand-icon" aria-hidden="true">🔮</div>
         <div class="brand-info">
           <div class="brand-name">Vizion</div>
           <div class="brand-status">
@@ -1188,7 +1341,7 @@
         <div class="welcome-subtitle">Your AI assistant powered by advanced language models. Ask me anything, upload
           images, or explore ideas together.</div>
         <div class="welcome-chips" role="group" aria-label="Suggestions">
-          <button class="chip" onclick="useSuggestion(this)">💡 Explain quantum computing</button>
+          <button class="chip" onclick="useSuggestion(this)">💡 Teach me basics of SQL</button>
           <button class="chip" onclick="useSuggestion(this)">📝 Write a professional email</button>
           <button class="chip" onclick="useSuggestion(this)">💻 Python code example</button>
           <button class="chip" onclick="useSuggestion(this)">🧠 Interesting fun facts</button>
@@ -1223,11 +1376,21 @@
             aria-label="Send message">➤</button>
         </div>
       </div>
-      <div class="input-hint">Vizion can make mistakes. Verify important info. • Ctrl+V to paste images</div>
+      <div class="input-hint">Vizion can make mistakes. Verify important info.</div>
     </div>
   </div>
 
   <script>
+    // ===== DISCLAIMER =====
+    function acceptDisclaimer() {
+      localStorage.setItem('vizion_disclaimer_accepted', 'true');
+      document.getElementById('disclaimerOverlay').classList.add('hidden');
+    }
+
+    // Check if already accepted
+    if (localStorage.getItem('vizion_disclaimer_accepted') === 'true') {
+      document.getElementById('disclaimerOverlay').classList.add('hidden');
+    }
     // ===== CONFIGURATION =====
     const API_URL = "https://f44lp3gxbg.execute-api.ap-south-1.amazonaws.com/chat";
     const MAX_IMAGE_SIZE = 4 * 1024 * 1024;
