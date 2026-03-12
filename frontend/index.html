@@ -1076,6 +1076,10 @@
       display: none;
     }
 
+    #fileInput {
+      display: none;
+    }
+
     /* ===== RESPONSIVE ===== */
     @media (min-width: 1200px) {
       .app-container {
@@ -1868,8 +1872,9 @@
       const input = document.getElementById('userInput');
       const userText = isRetry ? retryPayload.userText : input.value.trim();
       const imageToSend = isRetry ? retryPayload.image : selectedImage;
+      const fileToSend = isRetry ? retryPayload.file : selectedFile;
 
-      if (!userText && !imageToSend) return;
+      if (!userText && !imageToSend && !fileToSend) return;
 
       // Rate limit
       const now = Date.now();
@@ -1895,10 +1900,8 @@
       }
 
       // Build request
-      const fileToSend = isRetry ? retryPayload.file : selectedFile;
-
       const body = {
-        message: userText || (imageToSend ? 'What is in this image?' : 'Analyze this file and describe what you see.'),
+        message: userText || (fileToSend ? 'Analyze this file and describe what you see.' : (imageToSend ? 'What is in this image?' : '')),
         session_id: sessionId
       };
       if (imageToSend) {
@@ -1921,19 +1924,22 @@
         removeFile();
       }
 
+      // Longer timeout for file analysis
+      const currentTimeout = fileToSend ? 120000 : TIMEOUT_MS;
+
       setStatus('thinking');
       const typingEl = showTypingIndicator();
       abortController = new AbortController();
 
       try {
-        const timeout = setTimeout(() => abortController?.abort(), TIMEOUT_MS);
+        const timeout = setTimeout(() => abortController?.abort(), currentTimeout);
 
         const res = await fetch(API_URL, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json', 'x-api-secret': 'vizion-sk-2025-shankar-secure-key-xyz'
+            'Content-Type': 'application/json',
+            'x-api-secret': 'vizion-sk-2025-shankar-secure-key-xyz'
           },
-
           body: JSON.stringify(body),
           signal: abortController.signal
         });
@@ -1964,7 +1970,7 @@
       } catch (err) {
         typingEl.remove();
         if (err.name === 'AbortError') {
-          appendErrorMessage('Request cancelled.');
+          appendErrorMessage('Request cancelled or timed out.', true);
           setStatus('online');
         } else {
           appendErrorMessage('Could not reach the server. Check your connection.', true);
@@ -1976,16 +1982,6 @@
       isStreaming = false;
       updateSendButton(false);
       input.focus();
-    }
-
-    // ===== RETRY =====
-    function retryMessage() {
-      if (!retryPayload) return;
-      // Remove the last error message
-      const msgs = document.querySelectorAll('.message-wrapper.bot');
-      const last = msgs[msgs.length - 1];
-      if (last && last.querySelector('.error-msg')) last.remove();
-      sendMessage(true);
     }
 
     // ===== APPEND USER MESSAGE =====
@@ -2067,32 +2063,49 @@
     }
 
     // ===== APPEND ERROR MESSAGE =====
-    function appendErrorMessage(text, showRetry = false) {
+    function appendUserMessage(text, imageDataUrl, fileData) {
       const c = document.getElementById('chatMessages');
       messageCount++;
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
       const w = document.createElement('div');
-      w.className = 'message-wrapper bot';
-
-      let retryHtml = showRetry
-        ? '<button class="retry-btn" onclick="retryMessage()">🔄 Retry</button>'
-        : '';
-
+      w.className = 'message-wrapper user';
       w.innerHTML = `
-    <div class="avatar">🧠</div>
+    <div class="avatar">👤</div>
     <div class="message-content">
-      <div class="message error-msg">${escapeHtml(text)}</div>
-      ${retryHtml}
+      <div class="message"></div>
       <div class="message-meta">
         <span class="message-timestamp">${time}</span>
       </div>
     </div>`;
 
+      const msgDiv = w.querySelector('.message');
+
+      if (imageDataUrl) {
+        const img = document.createElement('img');
+        img.className = 'message-image';
+        img.src = imageDataUrl;
+        img.alt = 'Uploaded image';
+        img.onclick = () => openLightbox(imageDataUrl);
+        msgDiv.appendChild(img);
+      }
+
+      if (fileData) {
+        const fileTag = document.createElement('div');
+        fileTag.style.cssText = 'background:var(--accent-glow);padding:8px 12px;border-radius:8px;margin-bottom:6px;font-size:13px;';
+        fileTag.textContent = '📊 ' + fileData.name;
+        msgDiv.appendChild(fileTag);
+      }
+
+      if (text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        msgDiv.appendChild(d);
+      }
+
       c.appendChild(w);
       scrollToBottom();
     }
-
     function escapeHtml(text) {
       const d = document.createElement('div');
       d.textContent = text;

@@ -10,6 +10,11 @@ from decimal import Decimal
 
 # ===== CLIENTS =====
 bedrock = boto3.client("bedrock-runtime", region_name="ap-south-1")
+# Bedrock Agent client (Agent is in us-east-1)
+bedrock_agent = boto3.client(
+    "bedrock-agent-runtime",
+    region_name="us-east-1"
+)
 dynamodb = boto3.resource("dynamodb", region_name="ap-south-1")
 table = dynamodb.Table("chatbot-sessions")
 s3 = boto3.client("s3", region_name="ap-south-1")
@@ -28,6 +33,11 @@ RATE_LIMIT_SECONDS = 2
 API_SECRET = os.environ.get(
     "API_SECRET", "vizion-sk-2025-shankar-secure-key-xyz")
 VALID_IMAGE_FORMATS = {"jpeg", "png", "gif", "webp"}
+# Agent configuration
+AGENT_ID = "TJJBTFPBVD"
+AGENT_ALIAS_ID = "CGMGMRH3MV"
+VALID_FILE_FORMATS = {"csv", "xlsx", "xls"}
+MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
 SESSION_ID_PATTERN = re.compile(r'^sess_[a-zA-Z0-9]{8,20}_\d{10,15}$')
 
 # Simple in-memory rate limiter (per Lambda instance)
@@ -115,8 +125,21 @@ def validate_request(body):
         return False, "Invalid session_id format"
 
     # Message validation
-    if not message and not image_base64:
-        return False, "No message or image provided"
+        # File validation
+    file_base64 = body.get("file_base64", None)
+    file_name = body.get("file_name", None)
+
+    if file_base64 and not file_name:
+        return False, "File uploaded without filename"
+
+    if file_name:
+        file_ext = file_name.rsplit(
+            '.', 1)[-1].lower() if '.' in file_name else ''
+        if file_ext not in VALID_FILE_FORMATS:
+            return False, "Unsupported file type. Use CSV or Excel."
+
+    if not message and not image_base64 and not file_base64:
+        return False, "No message, image, or file provided"
 
     if message and len(message) > MAX_MESSAGE_LENGTH:
         return False, f"Message too long ({len(message)} chars). Max {MAX_MESSAGE_LENGTH}."
@@ -206,7 +229,35 @@ def save_image_to_s3(session_id, image_base64, image_format):
         return None
 
 
+def save_file_to_s3(session_id, file_bytes, file_name):
+    """Save uploaded file to S3."""
+    try:
+        file_id = str(uuid.uuid4())[:8]
+        date_prefix = datetime.now(timezone.utc).strftime("%Y/%m/%d")
+        s3_key = f"user-files/{date_prefix}/{session_id[:20]}/{file_id}_{file_name}"
+
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=file_bytes,
+            Metadata={
+                "session_id": session_id,
+                "original_name": file_name,
+                "uploaded_at": datetime.now(timezone.utc).isoformat()
+            }
+        )
+
+        print(
+            f"File saved: s3://{S3_BUCKET}/{s3_key} ({len(file_bytes)} bytes)")
+        return s3_key
+
+    except Exception as e:
+        print(f"S3 file upload error: {str(e)}")
+        return None
+
 # ===== RESPONSE CLEANING =====
+
+
 def clean_response(text):
     """Post-process AI response to fix identity leaks and detect issues."""
 
@@ -387,7 +438,70 @@ def build_image_request(user_message, image_base64, image_format):
     }
 
 
+def invoke_agent(session_id, user_message, file_bytes=None, file_name=None):
+    """Call Bedrock Agent with optional file attachment."""
+    try:
+        # Build the request
+        request_params = {
+            "agentId": AGENT_ID,
+            "agentAliasId": AGENT_ALIAS_ID,
+            "sessionId": session_id[:100],  # Agent session ID max 100 chars
+            "inputText": user_message or "Analyze this file and describe what you see."
+        }
+
+        # Attach file if present
+        if file_bytes and file_name:
+            file_ext = file_name.rsplit('.', 1)[-1].lower()
+
+            if file_ext == "csv":
+                media_type = "text/csv"
+            elif file_ext in ("xlsx", "xls"):
+                media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else:
+                media_type = "application/octet-stream"
+
+            request_params["sessionState"] = {
+                "files": [
+                    {
+                        "name": file_name,
+                        "source": {
+                            "byteContent": {
+                                "data": file_bytes,
+                                "mediaType": media_type
+                            }
+                        },
+                        "useCase": "CODE_INTERPRETER"
+                    }
+                ]
+            }
+
+        print(
+            f"Invoking agent: {AGENT_ID} | session: {session_id[:20]}... | file: {file_name or 'none'}")
+
+        # Call the agent
+        response = bedrock_agent.invoke_agent(**request_params)
+
+        # Read the streaming response
+        result_text = ""
+        for event in response.get("completion", []):
+            if "chunk" in event:
+                chunk_data = event["chunk"]
+                if "bytes" in chunk_data:
+                    result_text += chunk_data["bytes"].decode("utf-8")
+
+        if not result_text:
+            result_text = "I received your file but couldn't generate an analysis. Please try asking a specific question about the data."
+
+        print(f"Agent response length: {len(result_text)} chars")
+        return result_text
+
+    except Exception as e:
+        print(f"AGENT ERROR: {str(e)}")
+        return f"I encountered an error analyzing the file. Please try again. Error: {str(e)}"
+
 # ===== MAIN HANDLER =====
+
+
 def lambda_handler(event, context):
     start_time = time.time()
 
@@ -432,6 +546,9 @@ def lambda_handler(event, context):
         session_id = body.get("session_id", "default")
         image_base64 = body.get("image_base64", None)
         image_format = body.get("image_format", "png")
+        # File upload fields
+        file_base64 = body.get("file_base64", None)
+        file_name = body.get("file_name", None)
 
         # Normalize image format
         if image_format == "jpg":
@@ -442,6 +559,72 @@ def lambda_handler(event, context):
             return error_response("Too many requests. Please wait a moment.", origin, 429)
 
         has_image = bool(image_base64 and len(image_base64) > 0)
+        has_file = bool(file_base64 and file_name)
+
+        has_image = bool(image_base64 and len(image_base64) > 0)
+        has_file = bool(file_base64 and file_name)
+
+        # ===== FILE ANALYSIS (Agent) =====
+        if has_file:
+            print(f"File request: {file_name}")
+
+            # Validate file
+            file_ext = file_name.rsplit(
+                '.', 1)[-1].lower() if '.' in file_name else ''
+            if file_ext not in VALID_FILE_FORMATS:
+                return error_response(
+                    f"Unsupported file type '.{file_ext}'. Use CSV or Excel files.",
+                    origin
+                )
+
+            # Decode file
+            try:
+                file_bytes = base64.b64decode(file_base64)
+            except Exception:
+                return error_response("Invalid file data.", origin)
+
+            if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+                return error_response("File too large. Maximum 5MB.", origin)
+
+            # Save file to S3
+            file_s3_key = save_file_to_s3(session_id, file_bytes, file_name)
+
+            # Call Agent
+            agent_response = invoke_agent(
+                session_id,
+                user_message or "Analyze this file and describe what you see.",
+                file_bytes,
+                file_name
+            )
+
+            # Clean response
+            agent_response = clean_response(agent_response)
+
+            # Save to conversation history
+            messages = get_history(session_id)
+            messages.append({
+                "role": "user",
+                "content": [{"text": f"[Uploaded file: {file_name}] {user_message}"}]
+            })
+            messages.append({
+                "role": "assistant",
+                "content": [{"text": agent_response}]
+            })
+            save_history(session_id, messages)
+
+            total_time = time.time() - start_time
+            print(f"Agent request completed in {total_time:.2f}s")
+
+            return success_response({
+                "reply": agent_response,
+                "model_used": "bedrock-agent",
+                "file_saved": file_s3_key
+            }, origin)
+
+        # Save image to S3 if present  ← YOUR EXISTING CODE CONTINUES HERE
+        s3_key = None
+        if has_image:
+            s3_key = save_image_to_s3(session_id, image_base64, image_format)
 
         print(f"Request: session={session_id[:20]}... | "
               f"msg_len={len(user_message)} | "
