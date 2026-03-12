@@ -566,6 +566,33 @@
       transform: scale(1.02);
     }
 
+    /* ===== FILE PREVIEW BAR ===== */
+    .file-preview-bar {
+      display: none;
+      padding: 10px 24px;
+      background: var(--chat-bg);
+      border-top: 1px solid var(--border);
+      align-items: center;
+      gap: 12px;
+      animation: slideUp 0.2s ease;
+    }
+
+    .file-preview-bar.active {
+      display: flex;
+    }
+
+    .file-preview-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      background: var(--accent-glow);
+      border: 2px solid var(--accent-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
     /* ===== IMAGE PREVIEW BAR ===== */
     .image-preview-bar {
       display: none;
@@ -1351,7 +1378,15 @@
 
     <button class="scroll-bottom-btn" id="scrollBottomBtn" onclick="scrollToBottom()"
       aria-label="Scroll to bottom">↓</button>
-
+    <!-- File Preview -->
+    <div class="file-preview-bar" id="filePreviewBar">
+      <div class="file-preview-icon">📊</div>
+      <div class="preview-info">
+        <div class="preview-name" id="filePreviewName"></div>
+        <div class="preview-size" id="filePreviewSize"></div>
+      </div>
+      <button class="preview-remove" onclick="removeFile()" aria-label="Remove file">✕</button>
+    </div>
     <div class="image-preview-bar" id="imagePreviewBar">
       <img class="preview-thumbnail" id="previewThumbnail" src="" alt="Preview" />
       <div class="preview-info">
@@ -1364,6 +1399,7 @@
     <div class="chat-input-area">
       <input type="file" id="imageInput" accept="image/jpeg,image/png,image/gif,image/webp"
         onchange="handleImageSelect(event)" />
+      <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" onchange="handleFileSelect(event)" />
       <div class="input-box">
         <textarea id="userInput" placeholder="Message Vizion..." rows="1" maxlength="4000"
           onkeydown="handleKeyDown(event)" oninput="autoResize(this); updateCharCount()"
@@ -1372,6 +1408,8 @@
           <span class="char-count" id="charCount"></span>
           <button class="input-icon-btn" id="attachBtn" onclick="document.getElementById('imageInput').click()"
             title="Upload image" aria-label="Attach image">📎</button>
+          <button class="input-icon-btn" id="fileBtn" onclick="document.getElementById('fileInput').click()"
+            title="Upload CSV/Excel" aria-label="Attach file">📊</button>
           <button class="send-btn" id="sendBtn" onclick="handleSendClick()" title="Send"
             aria-label="Send message">➤</button>
         </div>
@@ -1404,6 +1442,7 @@
     let messageCount = 0;
     let isStreaming = false;
     let selectedImage = null;
+    let selectedFile = null;
     let lastSendTime = 0;
     let abortController = null;
     let retryPayload = null;
@@ -1629,6 +1668,62 @@
       document.getElementById('attachBtn').classList.remove('has-image');
     }
 
+    // ===== FILE HANDLING =====
+    function handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const validTypes = [
+        'text/csv',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      ];
+
+      const validExtensions = ['csv', 'xlsx', 'xls'];
+      const ext = file.name.split('.').pop().toLowerCase();
+
+      if (!validTypes.includes(file.type) && !validExtensions.includes(ext)) {
+        showToast('Please upload a CSV or Excel file', 'error');
+        event.target.value = '';
+        return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        showToast('File too large. Maximum 5MB.', 'error');
+        event.target.value = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const dataUrl = e.target.result;
+        selectedFile = {
+          base64: dataUrl.split(',')[1],
+          name: file.name,
+          size: file.size
+        };
+        showFilePreview();
+        showToast('File attached: ' + file.name, 'success');
+      };
+      reader.onerror = () => showToast('Failed to read file', 'error');
+      reader.readAsDataURL(file);
+      event.target.value = '';
+    }
+
+    function showFilePreview() {
+      document.getElementById('filePreviewName').textContent = selectedFile.name;
+      document.getElementById('filePreviewSize').textContent = formatFileSize(selectedFile.size);
+      document.getElementById('filePreviewBar').classList.add('active');
+      document.getElementById('fileBtn').classList.add('has-image');
+    }
+
+    function removeFile() {
+      selectedFile = null;
+      document.getElementById('fileInput').value = '';
+      document.getElementById('filePreviewBar').classList.remove('active');
+      document.getElementById('fileBtn').classList.remove('has-image');
+    }
+
     function formatFileSize(b) {
       if (b < 1024) return b + ' B';
       if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
@@ -1796,27 +1891,34 @@
 
       // Show user message only on first send
       if (!isRetry) {
-        appendUserMessage(userText, imageToSend ? imageToSend.dataUrl : null);
+        appendUserMessage(userText, imageToSend ? imageToSend.dataUrl : null, fileToSend);
       }
 
       // Build request
+      const fileToSend = isRetry ? retryPayload.file : selectedFile;
+
       const body = {
-        message: userText || 'What is in this image?',
+        message: userText || (imageToSend ? 'What is in this image?' : 'Analyze this file and describe what you see.'),
         session_id: sessionId
       };
       if (imageToSend) {
         body.image_base64 = imageToSend.base64;
         body.image_format = imageToSend.format;
       }
+      if (fileToSend) {
+        body.file_base64 = fileToSend.base64;
+        body.file_name = fileToSend.name;
+      }
 
       // Save for retry
-      retryPayload = { userText, image: imageToSend, body };
+      retryPayload = { userText, image: imageToSend, file: fileToSend, body };
 
       if (!isRetry) {
         input.value = '';
         input.style.height = 'auto';
         updateCharCount();
         removeImage();
+        removeFile();
       }
 
       setStatus('thinking');
@@ -1887,7 +1989,7 @@
     }
 
     // ===== APPEND USER MESSAGE =====
-    function appendUserMessage(text, imageDataUrl) {
+    function appendUserMessage(text, imageDataUrl, fileData) {
       const c = document.getElementById('chatMessages');
       messageCount++;
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1913,7 +2015,12 @@
         img.onclick = () => openLightbox(imageDataUrl);
         msgDiv.appendChild(img);
       }
-
+      if (fileToSend) {
+        const fileTag = document.createElement('div');
+        fileTag.style.cssText = 'background:var(--accent-glow);padding:8px 12px;border-radius:8px;margin-bottom:6px;font-size:13px;';
+        fileTag.textContent = '📊 ' + fileToSend.name;
+        msgDiv.appendChild(fileTag);
+      }
       if (text) {
         const d = document.createElement('div');
         d.textContent = text;
