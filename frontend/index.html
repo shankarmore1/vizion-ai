@@ -553,6 +553,71 @@
       color: var(--accent);
     }
 
+    /* ===== SOURCES (web search) ===== */
+    .sources-box {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-width: 100%;
+    }
+
+    .sources-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--timestamp);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 2px;
+    }
+
+    .source-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      background: var(--bot-msg);
+      border: 1px solid var(--bot-border);
+      border-radius: 10px;
+      text-decoration: none;
+      color: var(--bot-text);
+      font-size: 12.5px;
+      transition: all 0.15s ease;
+    }
+
+    .source-link:hover {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    .source-num {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .source-title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-link .icon {
+      width: 13px;
+      height: 13px;
+      stroke: var(--timestamp);
+      flex-shrink: 0;
+    }
+
     .retry-btn {
       display: inline-flex;
       align-items: center;
@@ -1550,6 +1615,14 @@
       <symbol id="i-lightbulb" viewBox="0 0 24 24">
         <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z" />
       </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+      </symbol>
+      <symbol id="i-external" viewBox="0 0 24 24">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <path d="M15 3h6v6M10 14L21 3" />
+      </symbol>
     </defs>
   </svg>
 
@@ -1688,6 +1761,10 @@
           aria-label="Type your message"></textarea>
         <div class="input-actions">
           <span class="char-count" id="charCount"></span>
+          <button class="input-icon-btn" id="webSearchBtn" onclick="toggleWebSearch()"
+            title="Search the web" aria-label="Toggle web search" aria-pressed="false"><svg class="icon">
+              <use href="#i-globe"></use>
+            </svg></button>
           <button class="input-icon-btn" id="attachBtn" onclick="document.getElementById('imageInput').click()"
             title="Upload image" aria-label="Attach image"><svg class="icon">
               <use href="#i-image"></use>
@@ -1736,6 +1813,7 @@
     let lastSendTime = 0;
     let abortController = null;
     let retryPayload = null;
+    let webSearchEnabled = false;
 
     function loadSessionId() {
       let id;
@@ -1873,6 +1951,42 @@
       document.getElementById('userInput').value = text;
       updateCharCount();
       sendMessage();
+    }
+
+    // ===== WEB SEARCH TOGGLE =====
+    function toggleWebSearch() {
+      webSearchEnabled = !webSearchEnabled;
+      const btn = document.getElementById('webSearchBtn');
+      btn.classList.toggle('has-image', webSearchEnabled);  // reuse active style
+      btn.setAttribute('aria-pressed', webSearchEnabled ? 'true' : 'false');
+      showToast(webSearchEnabled ? 'Web search ON' : 'Web search OFF',
+        webSearchEnabled ? 'success' : 'info');
+    }
+
+    // ===== RENDER SOURCES =====
+    function renderSources(wrapper, sources) {
+      const content = wrapper.querySelector('.message-content');
+      if (!content) return;
+      const box = document.createElement('div');
+      box.className = 'sources-box';
+      const label = document.createElement('div');
+      label.className = 'sources-label';
+      label.textContent = 'Sources';
+      box.appendChild(label);
+      sources.forEach((s, i) => {
+        const a = document.createElement('a');
+        a.className = 'source-link';
+        a.href = s.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.innerHTML = `<span class="source-num">${i + 1}</span>` +
+          `<span class="source-title"></span>` +
+          `<svg class="icon"><use href="#i-external"></use></svg>`;
+        a.querySelector('.source-title').textContent = s.title || s.url;
+        box.appendChild(a);
+      });
+      content.appendChild(box);
+      scrollToBottom();
     }
 
     // ===== NEW CHAT =====
@@ -2222,6 +2336,9 @@
         body.file_base64 = fileToSend.base64;
         body.file_name = fileToSend.name;
       }
+      if (webSearchEnabled) {
+        body.web_search = true;
+      }
 
       // Save for retry
       retryPayload = { userText, image: imageToSend, file: fileToSend, body };
@@ -2266,8 +2383,11 @@
         setStatus('online');
 
         if (data.reply) {
-          const { msgElement } = createBotMessage();
+          const { wrapper, msgElement } = createBotMessage();
           await streamText(msgElement, data.reply);
+          if (data.sources && data.sources.length) {
+            renderSources(wrapper, data.sources);
+          }
           retryPayload = null;
         } else if (data.error) {
           appendErrorMessage('Error: ' + data.error);
